@@ -56,6 +56,9 @@ class SwitchNode : public Node {
     // ConWeave (lb_mode = 9)
     uint32_t DoLbConWeave(Ptr<const Packet> p, const CustomHeader &ch,
                            const std::vector<int> &nexthops);  // dummy
+    // ConWeave (lb_mode = 11)               
+    uint32_t DoLbReunion(Ptr<const Packet> p, const CustomHeader &ch,
+                           const std::vector<int> &nexthops);
 
    public:
     // Ptr<BroadcomNode> m_broadcom;

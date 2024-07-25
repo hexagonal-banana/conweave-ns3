@@ -22,7 +22,7 @@ MAX_RAND_RANGE = 1000000000
 config_template = """TOPOLOGY_FILE config/{topo}.txt
 FLOW_FILE config/{flow}.txt
 
-FLOW_INPUT_FILE mix/output/{id}/{id}_in.txt
+FLOW_INPUT_FILE {inputflow}.txt
 CNP_OUTPUT_FILE mix/output/{id}/{id}_out_cnp.txt
 FCT_OUTPUT_FILE mix/output/{id}/{id}_out_fct.txt
 PFC_OUTPUT_FILE mix/output/{id}/{id}_out_pfc.txt
@@ -391,7 +391,8 @@ def main():
                                         fast_react=fast_react, mi=mi, int_multi=int_multi, ewma_gain=ewma_gain,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map,
                                         letflow_timeout=letflow_timeout,
-                                        paralet_on=paralet_on,paralet_k=paralet_k)
+                                        paralet_on=paralet_on,paralet_k=paralet_k,
+                                        inputflow=flowfile)
     else:
         print("unknown cc:{}".format(args.cc))
 

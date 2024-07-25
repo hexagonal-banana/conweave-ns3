@@ -10,6 +10,7 @@
 #include "ns3/conga-routing.h"
 #include "ns3/conweave-routing.h"
 #include "ns3/letflow-routing.h"
+#include "ns3/reunion-routing.h"
 #include "ns3/settings.h"
 
 
@@ -115,6 +116,9 @@ class SwitchMmu : public Object {
 
     /*------------ ConWeave Objects-------------*/
     ConWeaveRouting m_conweaveRouting;
+
+    /*------------  Reunion Objects-------------*/
+    ReunionRouting m_ReunionRouting;
 
    private:
     bool m_PFCenabled;

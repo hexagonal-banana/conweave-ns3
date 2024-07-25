@@ -272,6 +272,8 @@ int SwitchNode::GetOutDev(Ptr<Packet> p, CustomHeader &ch) {
             return DoLbLetflow(p, ch, nexthops);
         case 9:
             return DoLbConWeave(p, ch, nexthops); /** DUMMY: Do ECMP */
+        case 11:
+            return DoLbReunion(p,ch,nexthops);
         default:
             std::cout << "Unknown lb_mode(" << Settings::lb_mode << ")" << std::endl;
             assert(false);
@@ -427,4 +429,8 @@ uint64_t SwitchNode::GetTxBytesOutDev(uint32_t outdev) {
     return m_txBytes[outdev];
 }
 
+uint32_t SwitchNode::DoLbReunion(Ptr<const Packet> p, const CustomHeader &ch,
+                           const std::vector<int> &nexthops){
+    return nexthops[0];
+}
 } /* namespace ns3 */
