@@ -16,10 +16,12 @@ for src in range(host_id_start,host_id_end):
         dst=random.randint(host_id_start,host_id_end-1)
         while(dst==src):
             dst=random.randint(host_id_start,host_id_end-1)
-        flow_lst.append([src,dst])
+        flow_lst.append([src,dst,flow_size])
+
+flow_lst.append([0,9,100]) #for fct analysis
 
 print(len(flow_lst))
-for [src,dest] in flow_lst:
+for [src,dest,flow_size] in flow_lst:
     print(f"{src} {dest} {flow_perio} {flow_size} {start_time}")
 
 

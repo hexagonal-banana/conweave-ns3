@@ -149,6 +149,7 @@ if __name__=="__main__":
 		for x in a:
 			i = int(x.split(" ")[1])
 			val = float(x.split(" ")[0])
+			print(x)
 			if (i < OneBDP):
 				fct_bdp.append(val)
 			else:

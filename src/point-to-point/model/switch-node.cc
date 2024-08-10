@@ -16,6 +16,8 @@
 #include "ppp-header.h"
 #include "qbb-net-device.h"
 
+NS_LOG_COMPONENT_DEFINE("SwitchNode");
+
 namespace ns3 {
 
 TypeId SwitchNode::GetTypeId(void) {
@@ -260,6 +262,7 @@ int SwitchNode::GetOutDev(Ptr<Packet> p, CustomHeader &ch) {
         (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || ch.l3Prot == 0xFD || ch.l3Prot == 0xFC);
 
     if (Settings::lb_mode == 0 || control_pkt) {  // control packet (ACK, NACK, PFC, QCN)
+        NS_LOG_DEBUG("Control packet routed by ecmp");
         return DoLbFlowECMP(p, ch, nexthops);     // ECMP routing path decision (4-tuple)
     }
 
@@ -429,8 +432,24 @@ uint64_t SwitchNode::GetTxBytesOutDev(uint32_t outdev) {
     return m_txBytes[outdev];
 }
 
-uint32_t SwitchNode::DoLbReunion(Ptr<const Packet> p, const CustomHeader &ch,
+uint32_t SwitchNode::DoLbReunion(Ptr<Packet> p, CustomHeader &ch,
                            const std::vector<int> &nexthops){
-    return nexthops[0];
+    if (m_isToR && nexthops.size() == 1) {
+        if (m_isToR_hostIP.find(ch.sip) != m_isToR_hostIP.end() &&
+            m_isToR_hostIP.find(ch.dip) != m_isToR_hostIP.end()) {
+            return nexthops[0];  // intra-pod traffic
+        }
+    }
+
+    /* ONLY called for inter-Pod traffic */
+    uint32_t outPort = m_mmu->m_ReunionRouting.RouteInput(p, ch);
+    NS_LOG_DEBUG("RouteInput Switch ID: "<<m_mmu->m_ReunionRouting.m_switch_id<<" outport: "<<outPort<<" nexthops size: "<<nexthops.size());
+    if (outPort == REUNION_NULL) {
+        assert(nexthops.size() == 1);  // Receiver's TOR has only one interface to receiver-server
+        outPort = nexthops[0];         // has only one option
+    }
+    assert(std::find(nexthops.begin(), nexthops.end(), outPort) !=
+           nexthops.end());  // Result of Letflow cannot be found in nexthops
+    return outPort;
 }
 } /* namespace ns3 */

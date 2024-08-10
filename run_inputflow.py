@@ -20,9 +20,9 @@ MAX_RAND_RANGE = 1000000000
 
 # config template
 config_template = """TOPOLOGY_FILE config/{topo}.txt
-FLOW_FILE config/{flow}.txt
+FLOW_FILE {flowfile_path}
 
-FLOW_INPUT_FILE {inputflow}.txt
+FLOW_INPUT_FILE mix/output/{id}/{id}_in.txt
 CNP_OUTPUT_FILE mix/output/{id}/{id}_out_cnp.txt
 FCT_OUTPUT_FILE mix/output/{id}/{id}_out_fct.txt
 PFC_OUTPUT_FILE mix/output/{id}/{id}_out_pfc.txt
@@ -112,6 +112,7 @@ lb_modes = {
     "conga": 3,
     "letflow": 6,
     "conweave": 9,
+    "reunion":11,
 }
 
 topo2bdp = {
@@ -392,7 +393,7 @@ def main():
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map,
                                         letflow_timeout=letflow_timeout,
                                         paralet_on=paralet_on,paralet_k=paralet_k,
-                                        inputflow=flowfile)
+                                        flowfile_path=flowfile)
     else:
         print("unknown cc:{}".format(args.cc))
 
@@ -420,8 +421,7 @@ def main():
     #                 Analyze the output FCT           #
     ####################################################
     # NOTE: collect data except warm-up and cold-finish period
-    fct_analysis_time_limit_begin = int(
-        flowgen_start_time * 1e9) + int(0.005 * 1e9)  # warmup
+    fct_analysis_time_limit_begin = 0
     fct_analysistime_limit_end = int(
         flowgen_stop_time * 1e9) + int(0.05 * 1e9)  # extra term
 

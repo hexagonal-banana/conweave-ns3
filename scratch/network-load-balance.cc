@@ -54,8 +54,15 @@ using namespace std;
 NS_LOG_COMPONENT_DEFINE("GENERIC_SIMULATION");
 
 /*------Load balancing parameters-----*/
-// mode for load balancer, 0: flow ECMP, 2: DRILL, 3: Conga, 6: Letflow, 9: ConWeave
+// mode for load balancer, 0: flow ECMP, 2: DRILL, 3: Conga, 6: Letflow, 9: ConWeave, 11:Reunion
 uint32_t lb_mode = 0;
+
+//paralet config
+bool paralet_on=false;
+uint32_t paralet_k=0;
+uint32_t paralet_flowsize_threshold=1000*1000*1000;
+unordered_map<uint32_t,unordered_map<uint32_t,uint32_t>> paralet_finish_count; //finish_count[src_node_id][src_port/paralet_k]
+unordered_map<uint32_t,unordered_map<uint32_t,uint32_t>> paralet_size_count;//same index way with finish_count
 
 // Conga params (based on paper recommendation)
 Time conga_flowletTimeout = MicroSeconds(100);  // 100us
@@ -222,7 +229,11 @@ void ScheduleFlowInputs(FILE *infile) {
 
         // src port
         sport = portNumber[src];  // get a new port number
-        portNumber[src] = portNumber[src] + 1;
+
+        if(paralet_on)
+            portNumber[src] = portNumber[src] + paralet_k;// 1 qp in paralet use adjacent k src port number
+        else
+            portNumber[src] = portNumber[src] + 1;
 
         // dst port
         dport = dportNumber[dst];
@@ -269,6 +280,22 @@ void ScheduleFlowInputs(FILE *infile) {
             assert(false);
         }
 
+        if(paralet_on){
+            for(int i=0;i<paralet_k;i++){
+                RdmaClientHelper clientHelper(
+                    pg, serverAddress[src], serverAddress[dst], sport+i, dport, target_len/paralet_k,
+                    has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(src)][n.Get(dst)]) : 0,
+                    global_t == 1 ? maxRtt : pairRtt[n.Get(src)][n.Get(dst)]);//equal size for every subflow
+                //clientHelper.SetAttribute("StatFlowID", IntegerValue(flow_input.idx));
+
+                ApplicationContainer appCon = clientHelper.Install(n.Get(src));  // SRC
+                appCon.Start(Seconds(Time(0)));
+                appCon.Stop(Seconds(100.0));
+            }
+            paralet_finish_count[src][sport]=0;
+            paralet_size_count[src][sport]=0;
+        }
+        else{
         RdmaClientHelper clientHelper(
             pg, serverAddress[src], serverAddress[dst], sport, dport, target_len,
             has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(src)][n.Get(dst)]) : 0,
@@ -278,6 +305,7 @@ void ScheduleFlowInputs(FILE *infile) {
         ApplicationContainer appCon = clientHelper.Install(n.Get(src));  // SRC
         appCon.Start(Seconds(Time(0)));
         appCon.Stop(Seconds(100.0));
+        }
 
         flow_input.idx++;
         ReadFlowInput();
@@ -397,6 +425,10 @@ void letflow_history_print() {
               << "\nLetflow's timeout: " << letflow_flowletTimeout << std::endl;
 }
 
+void reunion_history_print() {
+    std::cout << "\n------------Reunion History---------------" << std::endl;
+    
+}
 /**
  * @brief Conweave rerouting/VOQ number recording
  */
@@ -487,13 +519,46 @@ void qp_finish(FILE *fout, Ptr<RdmaQueuePair> q) {
             standalone_fct);
 
     // for debugging
-    NS_LOG_DEBUG("%u %u %u %u %lu %lu %lu %lu\n" %
-                 (Settings::ip_to_node_id(q->sip), Settings::ip_to_node_id(q->dip), q->sport,
-                  q->dport, q->m_size, q->startTime.GetTimeStep(),
-                  (Simulator::Now() - q->startTime).GetTimeStep(), standalone_fct));
+    // NS_LOG_DEBUG("%u %u %u %u %lu %lu %lu %lu\n" %
+    //              (Settings::ip_to_node_id(q->sip), Settings::ip_to_node_id(q->dip), q->sport,
+    //               q->dport, q->m_size, q->startTime.GetTimeStep(),
+    //               (Simulator::Now() - q->startTime).GetTimeStep(), standalone_fct));
     Settings::cnt_finished_flows++;
     fflush(fout);
 }
+
+void qp_finish_paralet(FILE *fout, Ptr<RdmaQueuePair> q){
+    uint32_t sid = Settings::ip_to_node_id(q->sip), did = Settings::ip_to_node_id(q->dip);
+    uint64_t base_rtt = pairRtt[n.Get(sid)][n.Get(did)];
+    uint64_t b = pairBw[n.Get(sid)][n.Get(did)];
+
+    uint32_t  src_port=q->sport/paralet_k;
+    paralet_finish_count[sid][src_port]++;
+    paralet_size_count[sid][src_port]+=q->m_size + ((q->m_size - 1) / packet_payload_size + 1) *
+                        (CustomHeader::GetStaticWholeHeaderSize() -
+                         IntHeader::GetStaticSize());
+    
+    Ptr<Node> dstNode = n.Get(did);
+    Ptr<RdmaDriver> rdma = dstNode->GetObject<RdmaDriver>();
+    rdma->m_rdma->DeleteRxQp(q->sip.Get(), q->sport, q->dport, q->m_pg);
+
+    if(paralet_finish_count[sid][src_port]==paralet_k){
+        uint64_t standalone_fct = base_rtt + paralet_size_count[sid][src_port] * 8000000000lu / b;
+        fprintf(fout, "%u %u %u %u %lu %lu %lu %lu\n", Settings::ip_to_node_id(q->sip),
+            Settings::ip_to_node_id(q->dip), src_port, q->dport, q->m_size,
+            q->startTime.GetTimeStep(), (Simulator::Now() - q->startTime).GetTimeStep(),
+            standalone_fct);
+
+    // for debugging
+        // NS_LOG_DEBUG("%u %u %u %u %lu %lu %lu %lu\n" %
+        //          (Settings::ip_to_node_id(q->sip), Settings::ip_to_node_id(q->dip), q->sport,
+        //           q->dport, q->m_size, q->startTime.GetTimeStep(),
+        //           (Simulator::Now() - q->startTime).GetTimeStep(), standalone_fct));
+        Settings::cnt_finished_flows++;
+        fflush(fout);
+    }
+}
+
 
 /**
  * @brief PFC event logging
@@ -572,6 +637,9 @@ void stop_simulation_middle() {
         }
         if (lb_mode == 6) {  // LETFLOW
             letflow_history_print();
+        }
+        if (lb_mode == 11) {  // Reunion
+            reunion_history_print();
         }
         if (lb_mode == 9) {  // CONWEAVE
             conweave_history_print();
@@ -722,6 +790,11 @@ uint64_t get_nic_rate(NodeContainer &n) {
 /************************************************************************/
 
 int main(int argc, char *argv[]) {
+
+    LogComponentEnable("ReunionRouting",LOG_LEVEL_DEBUG);
+    LogComponentEnable("GENERIC_SIMULATION",LOG_LEVEL_ALL);
+    LogComponentEnable("SwitchNode",LOG_LEVEL_DEBUG);
+    //LogComponentEnable("QbbNetDevice",LOG_LEVEL_ALL);
     uint32_t *workload_cdf = nullptr;
     clock_t begint, endt;
     begint = clock();
@@ -761,7 +834,13 @@ int main(int argc, char *argv[]) {
                 conf >> v;
                 lb_mode = v;
                 std::cerr << "LB_MODE\t\t\t" << lb_mode << "\n";
-            } else if (key.compare("SW_MONITORING_INTERVAL") == 0) {
+            }else if(key.compare("LETFLOW_TIMEOUT") == 0){
+                uint32_t v;
+                conf >> v;
+                letflow_flowletTimeout = MicroSeconds(v);
+                std::cerr << "LETFLOW_TIMEOUT\t\t\t" << v << "\n";
+            } 
+            else if (key.compare("SW_MONITORING_INTERVAL") == 0) {
                 uint32_t v;
                 conf >> v;
                 switch_mon_interval = v;
@@ -1083,6 +1162,18 @@ int main(int argc, char *argv[]) {
                 random_seed = v;
                 std::cerr << "RANDOM_SEED\t\t\t" << random_seed << "\n";
             }
+            else if(key.compare("PARALET_ON") == 0){
+                bool v;
+                conf>>v;
+                paralet_on=v;
+                std::cerr << "PARALET_ON\t\t\t" << paralet_on << "\n";
+            }
+            else if(key.compare("PARALET_K") == 0){
+                uint32_t v;
+                conf>>v;
+                paralet_k=v;
+                std::cerr << "PARALET_ON\t\t\t" << paralet_on << "\n";
+            }
 
             fflush(stdout);
         }
@@ -1323,8 +1414,8 @@ int main(int argc, char *argv[]) {
             sw->m_mmu->ConfigBufferSize(buffer_size * 1024 *
                                         1024);  // default 0, specify in run.py!!
             sw->m_mmu->node_id = sw->GetId();
-            NS_LOG_INFO("Node %u : Broadcom switch (%u ports / %gMB MMU)\n" %
-                        (i, sw->GetNDevices() - 1, sw->m_mmu->GetMmuBufferBytes() / 1000000.));
+            // NS_LOG_INFO("Node %u : Broadcom switch (%u ports / %gMB MMU)\n" %
+            //             (i, sw->GetNDevices() - 1, sw->m_mmu->GetMmuBufferBytes() / 1000000.));
         }
     }
 
@@ -1430,7 +1521,12 @@ int main(int argc, char *argv[]) {
 
             node->AggregateObject(rdma);
             rdma->Init();
-            rdma->TraceConnectWithoutContext("QpComplete",
+
+            if(paralet_on)
+                rdma->TraceConnectWithoutContext("QpComplete",
+                                             MakeBoundCallback(qp_finish_paralet, fct_output));
+            else
+                rdma->TraceConnectWithoutContext("QpComplete",
                                              MakeBoundCallback(qp_finish, fct_output));
         }
     }
@@ -1497,7 +1593,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* config load balancer's switches using ToR-to-ToR routing */
-    if (lb_mode == 3 || lb_mode == 6 || lb_mode == 9) {  // Conga, Letflow, Conweave
+    if (lb_mode == 3 || lb_mode == 6 || lb_mode == 9||lb_mode==11) {  // Conga, Letflow, Conweave
         NS_LOG_INFO("Configuring Load Balancer's Switches");
         for (auto &pair : link_pairs) {
             Ptr<Node> probably_host = n.Get(pair.first);
@@ -1571,6 +1667,9 @@ int main(int argc, char *argv[]) {
                                     swSrc->m_mmu->m_conweaveRouting.m_rxToRId2BaseRTT[swDstId] =
                                         one_hop_delay * 4;
                                 }
+                                if(lb_mode==11){
+                                    swSrc->m_mmu->m_ReunionRouting._ReunionRouteTable[swDstId].insert(pathId);
+                                }
                                 continue;
                             }
 
@@ -1603,6 +1702,9 @@ int main(int argc, char *argv[]) {
                                         swSrc->m_mmu->m_conweaveRouting.m_rxToRId2BaseRTT[swDstId] =
                                             one_hop_delay * 6;
                                     }
+                                    if(lb_mode==11){
+                                        swSrc->m_mmu->m_ReunionRouting._ReunionRouteTable[swDstId].insert(pathId);
+                                }
                                     continue;
                                 }
 
@@ -1638,6 +1740,9 @@ int main(int argc, char *argv[]) {
                                                 .insert(pathId);
                                             swSrc->m_mmu->m_conweaveRouting
                                                 .m_rxToRId2BaseRTT[swDstId] = one_hop_delay * 8;
+                                        }
+                                        if(lb_mode==11){
+                                            swSrc->m_mmu->m_ReunionRouting._ReunionRouteTable[swDstId].insert(pathId);
                                         }
                                         continue;
                                     } else {
@@ -1680,7 +1785,7 @@ int main(int argc, char *argv[]) {
             if (i->first->GetNodeType() == 1) {
                 Ptr<Node> node = i->first;
                 Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(node);  // switch
-                NS_LOG_INFO("Switch Info - ID:%u, ToR:%d\n" % (sw->GetId(), sw->m_isToR));
+                //NS_LOG_INFO("Switch Info - ID:%u, ToR:%d\n" % (sw->GetId(), sw->m_isToR));
                 if (lb_mode == 3) {
                     sw->m_mmu->m_congaRouting.SetConstants(conga_dreTime, conga_agingTime,
                                                            conga_flowletTimeout, conga_quantizeBit,
@@ -1698,6 +1803,9 @@ int main(int argc, char *argv[]) {
                         conweave_txExpiryTime, conweave_defaultVOQWaitingTime,
                         conweave_pathPauseTime, conweave_pathAwareRerouting);
                     sw->m_mmu->m_conweaveRouting.SetSwitchInfo(sw->m_isToR, sw->GetId());
+                }
+                if(lb_mode==11) {
+                    sw->m_mmu->m_ReunionRouting.SetSwitchInfo(sw->m_isToR,sw->GetId());
                 }
             }
         }
