@@ -414,7 +414,7 @@ def main():
         history.write("\n")
 
     print(run_command)
-    os.system("./waf --run 'scratch/network-load-balance {config_name}' > {output_log} 2>&1".format(
+    os.system("./waf --run 'scratch/network-load-balance {config_name}'  > {output_log} 2>&1".format(
         config_name=config_name, output_log=output_log))
 
     ####################################################

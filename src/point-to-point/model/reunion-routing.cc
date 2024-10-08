@@ -63,7 +63,7 @@ void ReunionTag::Print(std::ostream& os) const {
         m_agingTime=Time(MicroSeconds(50));
 
         _HighUtilCount=12.5*1000*50*0.9;
-        _HighUtilCount=12.5*1000*50*0.7;
+        _LowUtilCount=12.5*1000*50*0.7;
     };
 
     uint64_t ReunionRouting::GetQpKey(uint32_t dip, uint16_t sport, uint16_t dport, uint16_t pg){
@@ -80,6 +80,7 @@ void ReunionTag::Print(std::ostream& os) const {
         uint32_t port=((uint8_t*)&path)[hopCount];
         if(_PortTransmit.find(port)==_PortTransmit.end())
             _PortTransmit[port]=0;
+        
         return port;
     };
 
@@ -113,13 +114,15 @@ void ReunionTag::Print(std::ostream& os) const {
             temp_tag.SetHopCount(0);
             temp_tag.SetPathId(flowlet->_PathId);
             p->AddPacketTag(temp_tag);
-            return GetOutPortFromPath(flowlet->_PathId,0);
+            uint32_t port=GetOutPortFromPath(flowlet->_PathId,0);
+            _PortTransmit[port]+=p->GetSize();
+            return port;
         }
         else{
             p->RemovePacketTag(tag);
-            NS_LOG_DEBUG("ReceiverToR "
-                        << m_switch_id
-                        << " Path " << tag.GetPathId() << " "<<now);
+            // NS_LOG_DEBUG("ReceiverToR "
+            //             << m_switch_id
+            //             << " Path " << tag.GetPathId() << " "<<now);
             return REUNION_NULL;
         }
     }
@@ -131,8 +134,9 @@ void ReunionTag::Print(std::ostream& os) const {
         ReunionTag temp_tag;
         p->RemovePacketTag(temp_tag);
         p->AddPacketTag(tag);
-
-        return GetOutPortFromPath(tag.GetPathId(),hopCount);
+        uint32_t port=GetOutPortFromPath(tag.GetPathId(),hopCount);
+        _PortTransmit[port]+=p->GetSize();
+        return port;
     }
     NS_ASSERT_MSG("false", "This should not be occured");
     };
@@ -159,6 +163,7 @@ void ReunionTag::Print(std::ostream& os) const {
                     if(*innerPathItr!=flowlet->_PathId&&_LowUtilizedPort.find(GetOutPortFromPath(*innerPathItr,hopcount))!=_LowUtilizedPort.end()){
                         flowlet->_PathId=*innerPathItr;
                         _LowUtilizedPort.erase(_LowUtilizedPort.find(GetOutPortFromPath(*innerPathItr,hopcount)));
+                        NS_LOG_DEBUG("Reroute flowlet from high util to low at switch "<<m_switch_id);
                         break;
                     }
                     innerPathItr++;
@@ -181,9 +186,9 @@ void ReunionTag::Print(std::ostream& os) const {
 
 
     uint32_t ReunionRouting::GetRandomPath(uint32_t dstToRId) {
-    NS_LOG_DEBUG("GetRandomPath: "<<m_switch_id<<" to "<<dstToRId);
-    for(auto it=_ReunionRouteTable.begin();it!=_ReunionRouteTable.end();it++)
-        NS_LOG_DEBUG("Routing table: "<<it->first<<" size: "<<it->second.size());
+    // NS_LOG_DEBUG("GetRandomPath: "<<m_switch_id<<" to "<<dstToRId);
+    // for(auto it=_ReunionRouteTable.begin();it!=_ReunionRouteTable.end();it++)
+    //     NS_LOG_DEBUG("Routing table: "<<it->first<<" size: "<<it->second.size());
     auto pathItr = _ReunionRouteTable.find(dstToRId);
     assert(pathItr != _ReunionRouteTable.end());  // Cannot find dstToRId from ToLeafTable
 
@@ -196,7 +201,7 @@ void ReunionTag::Print(std::ostream& os) const {
 }
 
 void ReunionRouting::AgingEvent(){
-
+    //NS_LOG_DEBUG("Aging event at "<<m_switch_id<<" High: "<<_HighUtilCount<<" Low: "<<_LowUtilCount);
     Time now=Simulator::Now();
     auto itr=_QpkeyToFlowlet.begin();
     while(itr!=_QpkeyToFlowlet.end()){
@@ -209,6 +214,7 @@ void ReunionRouting::AgingEvent(){
     _LowUtilizedPort.clear();
 
     for(auto portItr=_PortTransmit.begin();portItr!=_PortTransmit.end();portItr++){
+        //NS_LOG_DEBUG("port util couting: "<<portItr->second);
         if(portItr->second>_HighUtilCount)_HighUtilizedPort.insert(portItr->first);
         if(portItr->second<_LowUtilCount)_LowUtilizedPort.insert(portItr->first);
         portItr->second=0;

@@ -575,6 +575,7 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch) {
     //     std::cout << "[RdmaHw::Receive] Node(" << m_node->GetId() << ")," << PARSE_FIVE_TUPLE(ch)
     //     << "l3Prot:" << ch.l3Prot << ",at" << Simulator::Now() << std::endl;
     // #endif
+    NS_LOG_DEBUG("RdmaHw Reveive node: "<<m_node->GetId()<<" ,l3 Prot: "<<ch.l3Prot);
     if (ch.l3Prot == 0x11) {  // UDP
         return ReceiveUdp(p, ch);
     } else if (ch.l3Prot == 0xFF) {  // CNP

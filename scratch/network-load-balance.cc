@@ -792,8 +792,10 @@ uint64_t get_nic_rate(NodeContainer &n) {
 int main(int argc, char *argv[]) {
 
     LogComponentEnable("ReunionRouting",LOG_LEVEL_DEBUG);
-    LogComponentEnable("GENERIC_SIMULATION",LOG_LEVEL_ALL);
-    LogComponentEnable("SwitchNode",LOG_LEVEL_DEBUG);
+    //LogComponentEnable("GENERIC_SIMULATION",LOG_LEVEL_ALL);
+    //LogComponentEnable("SwitchNode",LOG_LEVEL_DEBUG);
+    //LogComponentEnable("RdmaHw",LOG_LEVEL_DEBUG);
+    //LogComponentEnable("QbbNetDevice",LOG_LEVEL_DEBUG);
     //LogComponentEnable("QbbNetDevice",LOG_LEVEL_ALL);
     uint32_t *workload_cdf = nullptr;
     clock_t begint, endt;

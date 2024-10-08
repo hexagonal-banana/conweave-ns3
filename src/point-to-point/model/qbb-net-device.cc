@@ -389,7 +389,10 @@ void QbbNetDevice::Receive(Ptr<Packet> packet) {
             // send to RdmaHw
             int ret = m_rdmaReceiveCb(packet, ch);
             // TODO we may based on the ret do something
-            if (ret == 0) DoMpiReceive(packet);
+            // if (ret == 0) {
+            //     NS_LOG_DEBUG("QbbNetDevice mpi receive??????");
+            //     DoMpiReceive(packet);
+            // }
         }
     }
     return;
