@@ -277,3 +277,7 @@ date,id,ccmode,lbmode,cwh_tx_expiry_time,cwh_extra_reply_deadline,cwh_path_pause
 ./waf --run 'scratch/network-load-balance /home/jduan/ns-allinone-3.19/ns-3.19/mix/output/194499348/config.txt' > /home/jduan/ns-allinone-3.19/ns-3.19/mix/output/194499348/config.log 2>&1
 ./waf --run 'scratch/network-load-balance' --command-template='gdb --args %s /home/jduan/ns-allinone-3.19/ns-3.19/mix/output/194499348/config.txt'
 
+10/08/24,974238033,1,6,1000,4,16,64,400,1,0,0,0,leaf_spine_128_100G_OS2,100,AliStorage2019,40,0.2
+./waf --run 'scratch/network-load-balance /home/jduan/ns-allinone-3.19/ns-3.19/mix/output/974238033/config.txt' > /home/jduan/ns-allinone-3.19/ns-3.19/mix/output/974238033/config.log 2>&1
+./waf --run 'scratch/network-load-balance' --command-template='gdb --args %s /home/jduan/ns-allinone-3.19/ns-3.19/mix/output/974238033/config.txt'
+
