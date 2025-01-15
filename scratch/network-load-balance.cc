@@ -57,12 +57,14 @@ NS_LOG_COMPONENT_DEFINE("GENERIC_SIMULATION");
 // mode for load balancer, 0: flow ECMP, 2: DRILL, 3: Conga, 6: Letflow, 9: ConWeave, 11:Reunion
 uint32_t lb_mode = 0;
 
-//paralet config
-bool paralet_on=false;
-uint32_t paralet_k=0;
-uint32_t paralet_flowsize_threshold=1000*1000*1000;
-unordered_map<uint32_t,unordered_map<uint32_t,uint32_t>> paralet_finish_count; //finish_count[src_node_id][src_port/paralet_k]
-unordered_map<uint32_t,unordered_map<uint32_t,uint32_t>> paralet_size_count;//same index way with finish_count
+// paralet config
+bool paralet_on = false;
+uint32_t paralet_k = 0;
+uint32_t paralet_flowsize_threshold = 1000 * 1000 * 1000;
+unordered_map<uint32_t, unordered_map<uint32_t, uint32_t>>
+    paralet_finish_count;  // finish_count[src_node_id][src_port/paralet_k]
+unordered_map<uint32_t, unordered_map<uint32_t, uint32_t>>
+    paralet_size_count;  // same index way with finish_count
 
 // Conga params (based on paper recommendation)
 Time conga_flowletTimeout = MicroSeconds(100);  // 100us
@@ -199,6 +201,7 @@ struct FlowInput {
 FlowInput flow_input = {0};  // global variable
 uint32_t flow_num;
 
+std::map<Ptr<Node>, std::queue<FlowInput>> task_list;
 /**
  * Read flow input from file "flowf"
  */
@@ -216,12 +219,32 @@ void ReadFlowInput() {
     }
 }
 
+void StartFlow(FlowInput &flow_input) {
+    uint32_t sport = portNumber[flow_input.src]++;  // get a new port number
+    uint32_t dport = dportNumber[flow_input.dst]++;
+    uint32_t target_len =
+        flow_input.maxPacketCount;  // this is actually not packet-count, but bytes
+    RdmaClientHelper clientHelper(
+        flow_input.pg, serverAddress[flow_input.src], serverAddress[flow_input.dst], sport, dport,
+        target_len,
+        has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(flow_input.src)][n.Get(flow_input.dst)])
+                : 0,
+        global_t == 1 ? maxRtt : pairRtt[n.Get(flow_input.src)][n.Get(flow_input.dst)]);
+    clientHelper.SetAttribute("StatFlowID", IntegerValue(flow_input.idx));
+
+    ApplicationContainer appCon = clientHelper.Install(n.Get(flow_input.src));  // SRC
+    appCon.Start(Simulator::Now());
+    appCon.Stop(Seconds(100.0));
+}
 /**
  * Scheduling flows given in /config/L_XX....txt file
  */
 void ScheduleFlowInputs(FILE *infile) {
     NS_LOG_DEBUG("ScheduleFlowInputs at " << Simulator::Now());
-    while (flow_input.idx < flow_num && Seconds(flow_input.start_time) == Simulator::Now()) {
+    for (auto iter = n.Begin(); iter != n.End(); iter++) {
+        task_list[*iter] = std::queue<FlowInput>();
+    };
+    while (flow_input.idx < flow_num) {
         uint32_t pg, src, dst, sport, dport, maxPacketCount, target_len;
         pg = flow_input.pg;
         src = flow_input.src;
@@ -230,8 +253,9 @@ void ScheduleFlowInputs(FILE *infile) {
         // src port
         sport = portNumber[src];  // get a new port number
 
-        if(paralet_on)
-            portNumber[src] = portNumber[src] + paralet_k;// 1 qp in paralet use adjacent k src port number
+        if (paralet_on)
+            portNumber[src] =
+                portNumber[src] + paralet_k;  // 1 qp in paralet use adjacent k src port number
         else
             portNumber[src] = portNumber[src] + 1;
 
@@ -280,37 +304,44 @@ void ScheduleFlowInputs(FILE *infile) {
             assert(false);
         }
 
-        if(paralet_on){
-            for(int i=0;i<paralet_k;i++){
-                RdmaClientHelper clientHelper(
-                    pg, serverAddress[src], serverAddress[dst], sport+i, dport, target_len/paralet_k,
-                    has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(src)][n.Get(dst)]) : 0,
-                    global_t == 1 ? maxRtt : pairRtt[n.Get(src)][n.Get(dst)]);//equal size for every subflow
-                //clientHelper.SetAttribute("StatFlowID", IntegerValue(flow_input.idx));
+        // if(paralet_on){
+        //     for(int i=0;i<paralet_k;i++){
+        //         RdmaClientHelper clientHelper(
+        //             pg, serverAddress[src], serverAddress[dst], sport+i, dport,
+        //             target_len/paralet_k, has_win ? (global_t == 1 ? maxBdp :
+        //             pairBdp[n.Get(src)][n.Get(dst)]) : 0, global_t == 1 ? maxRtt :
+        //             pairRtt[n.Get(src)][n.Get(dst)]);//equal size for every subflow
+        //         //clientHelper.SetAttribute("StatFlowID", IntegerValue(flow_input.idx));
 
-                ApplicationContainer appCon = clientHelper.Install(n.Get(src));  // SRC
-                appCon.Start(Seconds(Time(0)));
-                appCon.Stop(Seconds(100.0));
-            }
-            paralet_finish_count[src][sport]=0;
-            paralet_size_count[src][sport]=0;
-        }
-        else{
-        RdmaClientHelper clientHelper(
-            pg, serverAddress[src], serverAddress[dst], sport, dport, target_len,
-            has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(src)][n.Get(dst)]) : 0,
-            global_t == 1 ? maxRtt : pairRtt[n.Get(src)][n.Get(dst)]);
-        clientHelper.SetAttribute("StatFlowID", IntegerValue(flow_input.idx));
+        //         ApplicationContainer appCon = clientHelper.Install(n.Get(src));  // SRC
+        //         appCon.Start(Seconds(Time(0)));
+        //         appCon.Stop(Seconds(100.0));
+        //     }
+        //     paralet_finish_count[src][sport]=0;
+        //     paralet_size_count[src][sport]=0;
+        // }
 
-        ApplicationContainer appCon = clientHelper.Install(n.Get(src));  // SRC
-        appCon.Start(Seconds(Time(0)));
-        appCon.Stop(Seconds(100.0));
-        }
+        // RdmaClientHelper clientHelper(
+        //     pg, serverAddress[src], serverAddress[dst], sport, dport, target_len,
+        //     has_win ? (global_t == 1 ? maxBdp : pairBdp[n.Get(src)][n.Get(dst)]) : 0,
+        //     global_t == 1 ? maxRtt : pairRtt[n.Get(src)][n.Get(dst)]);
+        // clientHelper.SetAttribute("StatFlowID", IntegerValue(flow_input.idx));
 
+        // ApplicationContainer appCon = clientHelper.Install(n.Get(src));  // SRC
+        // appCon.Start(Seconds(Time(0)));
+        // appCon.Stop(Seconds(100.0));
+
+        task_list[n.Get(src)].push(flow_input);
         flow_input.idx++;
         ReadFlowInput();
     }
-
+    for (auto &pair : task_list) {
+        if (pair.second.size() > 0) {
+            FlowInput first_flow = pair.second.front();
+            pair.second.pop();
+            StartFlow(first_flow);
+        }
+    }
     // schedule the next time to run this function
     if (flow_input.idx < flow_num) {
         Simulator::Schedule(Seconds(flow_input.start_time) - Simulator::Now(), &ScheduleFlowInputs,
@@ -427,7 +458,6 @@ void letflow_history_print() {
 
 void reunion_history_print() {
     std::cout << "\n------------Reunion History---------------" << std::endl;
-    
 }
 /**
  * @brief Conweave rerouting/VOQ number recording
@@ -444,7 +474,8 @@ void conweave_history_print() {
 
     std::cout << "\n------------ConWeave History---------------" << std::endl;
     std::cout << "Number of INIT's Reply sent (RTT_REPLY):" << ConWeaveRouting::m_nReplyInitSent
-              << "\nNumber of Timely RTT_REPLY (INIT's Reply):" << ConWeaveRouting::m_nTimelyInitReplied
+              << "\nNumber of Timely RTT_REPLY (INIT's Reply):"
+              << ConWeaveRouting::m_nTimelyInitReplied
               << "\nNumber of TAIL's Reply Sent (CLEAR):" << ConWeaveRouting::m_nReplyTailSent
               << "\nNumber of Timely CLEAR (TAIL's Reply):" << ConWeaveRouting::m_nTimelyTailReplied
               << "\nNumber of NOTIFY Sent:" << ConWeaveRouting::m_nNotifySent
@@ -497,6 +528,13 @@ void conweave_history_print() {
  * @brief When one RDMA is finished, so does (1) QP, (2) RxQP, (3) write it on file fct.txt.
  */
 void qp_finish(FILE *fout, Ptr<RdmaQueuePair> q) {
+    Ptr<Node> srcNode = n.Get(Settings::ip_to_node_id(q->sip));
+    if(task_list[srcNode].size() > 0){
+        FlowInput next_flow = task_list[srcNode].front();
+        task_list[srcNode].pop();
+        StartFlow(next_flow);
+    }
+
     uint32_t sid = Settings::ip_to_node_id(q->sip), did = Settings::ip_to_node_id(q->dip);
     uint64_t base_rtt = pairRtt[n.Get(sid)][n.Get(did)];
     uint64_t b = pairBw[n.Get(sid)][n.Get(did)];
@@ -527,29 +565,29 @@ void qp_finish(FILE *fout, Ptr<RdmaQueuePair> q) {
     fflush(fout);
 }
 
-void qp_finish_paralet(FILE *fout, Ptr<RdmaQueuePair> q){
+void qp_finish_paralet(FILE *fout, Ptr<RdmaQueuePair> q) {
     uint32_t sid = Settings::ip_to_node_id(q->sip), did = Settings::ip_to_node_id(q->dip);
     uint64_t base_rtt = pairRtt[n.Get(sid)][n.Get(did)];
     uint64_t b = pairBw[n.Get(sid)][n.Get(did)];
 
-    uint32_t  src_port=q->sport/paralet_k;
+    uint32_t src_port = q->sport / paralet_k;
     paralet_finish_count[sid][src_port]++;
-    paralet_size_count[sid][src_port]+=q->m_size + ((q->m_size - 1) / packet_payload_size + 1) *
-                        (CustomHeader::GetStaticWholeHeaderSize() -
-                         IntHeader::GetStaticSize());
-    
+    paralet_size_count[sid][src_port] +=
+        q->m_size + ((q->m_size - 1) / packet_payload_size + 1) *
+                        (CustomHeader::GetStaticWholeHeaderSize() - IntHeader::GetStaticSize());
+
     Ptr<Node> dstNode = n.Get(did);
     Ptr<RdmaDriver> rdma = dstNode->GetObject<RdmaDriver>();
     rdma->m_rdma->DeleteRxQp(q->sip.Get(), q->sport, q->dport, q->m_pg);
 
-    if(paralet_finish_count[sid][src_port]==paralet_k){
+    if (paralet_finish_count[sid][src_port] == paralet_k) {
         uint64_t standalone_fct = base_rtt + paralet_size_count[sid][src_port] * 8000000000lu / b;
         fprintf(fout, "%u %u %u %u %lu %lu %lu %lu\n", Settings::ip_to_node_id(q->sip),
-            Settings::ip_to_node_id(q->dip), src_port, q->dport, q->m_size,
-            q->startTime.GetTimeStep(), (Simulator::Now() - q->startTime).GetTimeStep(),
-            standalone_fct);
+                Settings::ip_to_node_id(q->dip), src_port, q->dport, q->m_size,
+                q->startTime.GetTimeStep(), (Simulator::Now() - q->startTime).GetTimeStep(),
+                standalone_fct);
 
-    // for debugging
+        // for debugging
         // NS_LOG_DEBUG("%u %u %u %u %lu %lu %lu %lu\n" %
         //          (Settings::ip_to_node_id(q->sip), Settings::ip_to_node_id(q->dip), q->sport,
         //           q->dport, q->m_size, q->startTime.GetTimeStep(),
@@ -558,7 +596,6 @@ void qp_finish_paralet(FILE *fout, Ptr<RdmaQueuePair> q){
         fflush(fout);
     }
 }
-
 
 /**
  * @brief PFC event logging
@@ -790,13 +827,12 @@ uint64_t get_nic_rate(NodeContainer &n) {
 /************************************************************************/
 
 int main(int argc, char *argv[]) {
-
-    LogComponentEnable("ReunionRouting",LOG_LEVEL_DEBUG);
-    //LogComponentEnable("GENERIC_SIMULATION",LOG_LEVEL_ALL);
-    //LogComponentEnable("SwitchNode",LOG_LEVEL_DEBUG);
-    //LogComponentEnable("RdmaHw",LOG_LEVEL_DEBUG);
-    //LogComponentEnable("QbbNetDevice",LOG_LEVEL_DEBUG);
-    //LogComponentEnable("QbbNetDevice",LOG_LEVEL_ALL);
+    LogComponentEnable("ReunionRouting", LOG_LEVEL_DEBUG);
+    // LogComponentEnable("GENERIC_SIMULATION",LOG_LEVEL_ALL);
+    // LogComponentEnable("SwitchNode",LOG_LEVEL_DEBUG);
+    // LogComponentEnable("RdmaHw",LOG_LEVEL_DEBUG);
+    // LogComponentEnable("QbbNetDevice",LOG_LEVEL_DEBUG);
+    // LogComponentEnable("QbbNetDevice",LOG_LEVEL_ALL);
     uint32_t *workload_cdf = nullptr;
     clock_t begint, endt;
     begint = clock();
@@ -836,13 +872,12 @@ int main(int argc, char *argv[]) {
                 conf >> v;
                 lb_mode = v;
                 std::cerr << "LB_MODE\t\t\t" << lb_mode << "\n";
-            }else if(key.compare("LETFLOW_TIMEOUT") == 0){
+            } else if (key.compare("LETFLOW_TIMEOUT") == 0) {
                 uint32_t v;
                 conf >> v;
                 letflow_flowletTimeout = MicroSeconds(v);
                 std::cerr << "LETFLOW_TIMEOUT\t\t\t" << v << "\n";
-            } 
-            else if (key.compare("SW_MONITORING_INTERVAL") == 0) {
+            } else if (key.compare("SW_MONITORING_INTERVAL") == 0) {
                 uint32_t v;
                 conf >> v;
                 switch_mon_interval = v;
@@ -1163,17 +1198,15 @@ int main(int argc, char *argv[]) {
                 conf >> v;
                 random_seed = v;
                 std::cerr << "RANDOM_SEED\t\t\t" << random_seed << "\n";
-            }
-            else if(key.compare("PARALET_ON") == 0){
+            } else if (key.compare("PARALET_ON") == 0) {
                 bool v;
-                conf>>v;
-                paralet_on=v;
+                conf >> v;
+                paralet_on = v;
                 std::cerr << "PARALET_ON\t\t\t" << paralet_on << "\n";
-            }
-            else if(key.compare("PARALET_K") == 0){
+            } else if (key.compare("PARALET_K") == 0) {
                 uint32_t v;
-                conf>>v;
-                paralet_k=v;
+                conf >> v;
+                paralet_k = v;
                 std::cerr << "PARALET_ON\t\t\t" << paralet_on << "\n";
             }
 
@@ -1458,7 +1491,7 @@ int main(int argc, char *argv[]) {
     // manually type BDP
     std::map<std::string, uint32_t> topo2bdpMap;
     topo2bdpMap[std::string("leaf_spine_128_100G_OS2")] = 104000;  // RTT=8320
-    topo2bdpMap[std::string("fat_k8_100G_OS2")] = 156000;      // RTT=12480 --> all 100G links
+    topo2bdpMap[std::string("fat_k8_100G_OS2")] = 156000;          // RTT=12480 --> all 100G links
 
     // topology_file
     bool found_topo2bdpMap = false;
@@ -1524,12 +1557,12 @@ int main(int argc, char *argv[]) {
             node->AggregateObject(rdma);
             rdma->Init();
 
-            if(paralet_on)
+            if (paralet_on)
                 rdma->TraceConnectWithoutContext("QpComplete",
-                                             MakeBoundCallback(qp_finish_paralet, fct_output));
+                                                 MakeBoundCallback(qp_finish_paralet, fct_output));
             else
                 rdma->TraceConnectWithoutContext("QpComplete",
-                                             MakeBoundCallback(qp_finish, fct_output));
+                                                 MakeBoundCallback(qp_finish, fct_output));
         }
     }
 
@@ -1595,7 +1628,8 @@ int main(int argc, char *argv[]) {
     }
 
     /* config load balancer's switches using ToR-to-ToR routing */
-    if (lb_mode == 3 || lb_mode == 6 || lb_mode == 9||lb_mode==11) {  // Conga, Letflow, Conweave
+    if (lb_mode == 3 || lb_mode == 6 || lb_mode == 9 ||
+        lb_mode == 11) {  // Conga, Letflow, Conweave
         NS_LOG_INFO("Configuring Load Balancer's Switches");
         for (auto &pair : link_pairs) {
             Ptr<Node> probably_host = n.Get(pair.first);
@@ -1669,8 +1703,9 @@ int main(int argc, char *argv[]) {
                                     swSrc->m_mmu->m_conweaveRouting.m_rxToRId2BaseRTT[swDstId] =
                                         one_hop_delay * 4;
                                 }
-                                if(lb_mode==11){
-                                    swSrc->m_mmu->m_ReunionRouting._ReunionRouteTable[swDstId].insert(pathId);
+                                if (lb_mode == 11) {
+                                    swSrc->m_mmu->m_ReunionRouting._ReunionRouteTable[swDstId]
+                                        .insert(pathId);
                                 }
                                 continue;
                             }
@@ -1704,9 +1739,10 @@ int main(int argc, char *argv[]) {
                                         swSrc->m_mmu->m_conweaveRouting.m_rxToRId2BaseRTT[swDstId] =
                                             one_hop_delay * 6;
                                     }
-                                    if(lb_mode==11){
-                                        swSrc->m_mmu->m_ReunionRouting._ReunionRouteTable[swDstId].insert(pathId);
-                                }
+                                    if (lb_mode == 11) {
+                                        swSrc->m_mmu->m_ReunionRouting._ReunionRouteTable[swDstId]
+                                            .insert(pathId);
+                                    }
                                     continue;
                                 }
 
@@ -1743,8 +1779,10 @@ int main(int argc, char *argv[]) {
                                             swSrc->m_mmu->m_conweaveRouting
                                                 .m_rxToRId2BaseRTT[swDstId] = one_hop_delay * 8;
                                         }
-                                        if(lb_mode==11){
-                                            swSrc->m_mmu->m_ReunionRouting._ReunionRouteTable[swDstId].insert(pathId);
+                                        if (lb_mode == 11) {
+                                            swSrc->m_mmu->m_ReunionRouting
+                                                ._ReunionRouteTable[swDstId]
+                                                .insert(pathId);
                                         }
                                         continue;
                                     } else {
@@ -1787,7 +1825,7 @@ int main(int argc, char *argv[]) {
             if (i->first->GetNodeType() == 1) {
                 Ptr<Node> node = i->first;
                 Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(node);  // switch
-                //NS_LOG_INFO("Switch Info - ID:%u, ToR:%d\n" % (sw->GetId(), sw->m_isToR));
+                // NS_LOG_INFO("Switch Info - ID:%u, ToR:%d\n" % (sw->GetId(), sw->m_isToR));
                 if (lb_mode == 3) {
                     sw->m_mmu->m_congaRouting.SetConstants(conga_dreTime, conga_agingTime,
                                                            conga_flowletTimeout, conga_quantizeBit,
@@ -1806,8 +1844,8 @@ int main(int argc, char *argv[]) {
                         conweave_pathPauseTime, conweave_pathAwareRerouting);
                     sw->m_mmu->m_conweaveRouting.SetSwitchInfo(sw->m_isToR, sw->GetId());
                 }
-                if(lb_mode==11) {
-                    sw->m_mmu->m_ReunionRouting.SetSwitchInfo(sw->m_isToR,sw->GetId());
+                if (lb_mode == 11) {
+                    sw->m_mmu->m_ReunionRouting.SetSwitchInfo(sw->m_isToR, sw->GetId());
                 }
             }
         }
